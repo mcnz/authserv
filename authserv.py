@@ -169,6 +169,7 @@ class ClientContext():
         elif 1 == self.state:
             if 0x00 == p_id:
                 # ping request
+                self.state = C_AUTHENTIC
                 response = {
                     'version': {
                         'name':     M_VERSION,
