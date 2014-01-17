@@ -1,4 +1,5 @@
 # encoding: utf-8
+
 import logging
 
 LOG_FILE        = 'authserv.log'

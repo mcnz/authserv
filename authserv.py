@@ -5,6 +5,7 @@ import logging
 from argparse import ArgumentParser
 
 from logger import setupLogging
+from keymanager import KeyManager
 
 C_BIND_IP   = ''
 C_BIND_PORT = 25565
@@ -41,3 +42,5 @@ if __name__ == '__main__':
     setupLogging(logging.DEBUG if conf.verbose else logging.INFO)
 
     logging.info('Loaded configuration')
+
+    key = KeyManager(conf.key)
