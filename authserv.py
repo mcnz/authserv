@@ -4,14 +4,18 @@
 import logging
 import socket
 from sys import exc_info
+from json import dumps
 from select import select
 from urllib2 import urlopen
 from argparse import ArgumentParser
 from traceback import format_exception
 
+from Crypto.Cipher import AES
+
 from logger import setupLogging
 from keymanager import KeyManager
 from utils import *
+from database import Database
 
 C_BIND_IP   = ''
 C_BIND_PORT = 25565
@@ -19,7 +23,18 @@ C_AUTHENTIC = 9001
 C_AUTH_SIZE = 5
 
 M_PROTOCOL  = 4
+M_VERSION   = '1.7.2'
+M_PLAYERS   = (0, 1)
+M_DESC      = u'\u00a77 MinecraftNZ Registration'
 M_URI       = 'https://sessionserver.mojang.com/session/minecraft/hasJoined?username=%s&serverId=%s'
+M_KEY_TEXT  = u'\u00a74-=-=-=-=-{ \u00a76register.minecraft.co.nz \u00a74}-=-=-=-=-\n\n'
+M_KEY_TEXT += u'\u00a72 Successful session verification with Mojang\n\n'
+M_KEY_TEXT += u'\u00a77Thanks \u00a7a%s\u00a77, your authkey is \u00a7b%s\n\n'
+M_KEY_TEXT += u'\u00a74-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-'
+M_BAD_TEXT  = u'\u00a74-=-=-=-=-{ \u00a76register.minecraft.co.nz \u00a74}-=-=-=-=-\n\n'
+M_BAD_TEXT += u'\u00a7c Something went wrong :(\n\n'
+M_BAD_TEXT += u'\u00a77 Please try again or contact an admin\n\n'
+M_BAD_TEXT += u'\u00a74-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-'
 
 S_BLOCK_TIME    = 1.0
 S_RECV_SIZE     = 1024
@@ -59,6 +74,9 @@ class BadPacketIdentifierException(Exception):
 class BadDecryptionVerificationException(Exception):
     pass
 
+class InvalidSecretLengthException(Exception):
+    pass
+
 class MojangAuthenticationException(Exception):
     pass
 
@@ -73,6 +91,7 @@ class ClientContext():
         self.buff = bytearray()
         self.state = 0
         self.playername = None
+        self.encrypted = False
 
         self.serverid = pseudorandom_string(16)
         self.verifytoken = pseudorandom_string(4)
@@ -92,6 +111,8 @@ class ClientContext():
 
     def disconnect(self):
         try:
+            if C_AUTHENTIC != self.state:
+                self.sendDisconnect(M_BAD_TEXT)
             self.sock.shutdown(socket.SHUT_RD)
             self.sock.close()
         except socket.error:
@@ -145,6 +166,27 @@ class ClientContext():
             else:
                 raise BadPacketIdentifierException('%d (state 0)' % p_id)
 
+        elif 1 == self.state:
+            if 0x00 == p_id:
+                # ping request
+                response = {
+                    'version': {
+                        'name':     M_VERSION,
+                        'protocol': M_PROTOCOL,
+                    },
+                    'players': {
+                        'online':   M_PLAYERS[0],
+                        'max':      M_PLAYERS[1]
+                    },
+                    'description':  M_DESC
+                }
+                self.sendDisconnect(response)
+            elif 0x01 == p_id:
+                # ping latency
+                self.sendPingLatency(p_data)
+            else:
+                raise BadPacketIdentifierException('%d (state 1)' % p_id)
+
         elif 2 == self.state:
             if 0x00 == p_id:
                 # second handshake: player name
@@ -165,7 +207,10 @@ class ClientContext():
                 if self.verifytoken != self.key.decryptPKCS115(encverifytoken):
                     raise BadDecryptionVerificationException('Token mismatch')
                 self.secret = self.key.decryptPKCS115(encsecret)
+                if AES.block_size != len(self.secret):
+                    raise InvalidSecretLengthException('%d (expected %d)', len(self.secret), AES.block_size)
                 self.logger.debug('2 | 0x01 | secret ' + self.secret.encode('hex'))
+                self.enableEncryption()
                 self.authenticate()
             else:
                 raise BadPacketIdentifierException('%d (state 2)' % p_id)
@@ -176,6 +221,21 @@ class ClientContext():
         data += pack_data(self.serverid) + pack_short(len(der)) + der
         data += pack_short(len(self.verifytoken)) + self.verifytoken
         self.sock.send(pack_data(data))
+
+    def sendDisconnect(self, obj):
+        jsonmessage = dumps(obj).encode('utf-8')
+        data = pack_data(pack_varint(0x00) + pack_data(jsonmessage))
+        if self.encrypted:
+            data = self.cipher.encrypt(data)
+        self.sock.send(data)
+
+    def sendPingLatency(self, timestamp):
+        data = pack_data(pack_varint(0x01) + str(timestamp))
+        self.sock.send(data)
+
+    def enableEncryption(self):
+        self.cipher = AES.new(self.secret, AES.MODE_CFB, self.secret)
+        self.encrypted = True
 
     def authenticate(self):
         serverhash = login_hash(
@@ -192,7 +252,15 @@ class ClientContext():
         self.authkey()
 
     def authkey(self):
-        authkey = pseudorandom_string(C_AUTH_SIZE)
+        with Database() as db:
+            # generate a unique authkey
+            authkey = pseudorandom_string(C_AUTH_SIZE)
+            while db.authkeyExists(authkey):
+                authkey = pseudorandom_string(C_AUTH_SIZE)
+            # save it
+            db.insertAuthkey(self.playername, authkey)
+        self.sendDisconnect(M_KEY_TEXT % (self.playername, '12345'))
+        raise EndOfStreamException()
 
 
 class AuthServer():
