@@ -1,6 +1,7 @@
 # encoding: utf-8
 
 from logging import getLogger
+from os.path import isfile
 
 from Crypto.PublicKey import RSA
 
@@ -36,9 +37,10 @@ class KeyManager():
 
     def loadOwnKey(self, filename=None):
         # load private key
-        self.keyfile = filename or C_KEY_FILENAME
-        if not self.keyfile:
+        filename = filename or C_KEY_FILENAME
+        if not isfile(filename):
             raise self.KeyNotFoundException('Could not find key to load')
+        self.keyfile = filename
         self.privatekey = self._loadKeyFile(self.keyfile)
         self.publickey = self.privatekey.publickey()
 
