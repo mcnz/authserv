@@ -258,8 +258,9 @@ class ClientContext():
             while db.authkeyExists(authkey):
                 authkey = pseudorandom_string(C_AUTH_SIZE)
             # save it
+            self.logger.info('Assigning authkey %s to %s', authkey, self.playername)
             db.insertAuthkey(self.playername, authkey)
-        self.sendDisconnect(M_KEY_TEXT % (self.playername, '12345'))
+        self.sendDisconnect(M_KEY_TEXT % (self.playername, authkey))
         raise EndOfStreamException()
 
 
