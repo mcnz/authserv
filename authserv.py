@@ -10,9 +10,12 @@ from traceback import format_exception
 
 from logger import setupLogging
 from keymanager import KeyManager
+from utils import *
 
 C_BIND_IP   = ''
 C_BIND_PORT = 25565
+
+M_PROTOCOL  = 4
 
 S_BLOCK_TIME    = 1.0
 S_RECV_SIZE     = 1024
@@ -49,6 +52,12 @@ class EndOfStreamException(Exception):
     """
     pass
 
+class BadPacketIdentifierException(Exception):
+    """
+    Unexpected packet
+    """
+    pass
+
 class ClientContext():
 
     def __init__(self, k, s, d):
@@ -58,6 +67,8 @@ class ClientContext():
 
         self.logger = logging.getLogger(d[0])
         self.buff = bytearray()
+        self.state = 0
+        self.playername = None
 
         self.logger.info('Client connected')
 
@@ -72,9 +83,6 @@ class ClientContext():
     def dispose(self):
         self.disconnect()
 
-    def parseBuffer(self):
-        print 'reading a bit'
-
     def disconnect(self):
         try:
             self.sock.shutdown(socket.SHUT_RD)
@@ -82,6 +90,66 @@ class ClientContext():
         except socket.error:
             pass
         self.logger.info('Disconnected')
+
+    def parseBuffer(self):
+        # read packet length
+        try:
+            packetlength, varintlength = unpack_varint(self.buff)
+        except:
+            return
+        while len(self.buff) >= packetlength + varintlength:
+            # flush packetlength
+            del self.buff[:varintlength]
+            packetid, varintlength = unpack_varint(self.buff)
+            packetlength -= varintlength
+            # flush packetid length
+            del self.buff[:varintlength]
+            self.parsePacket(packetid, buffer(self.buff, 0, packetlength))
+            # flush packet data
+            del self.buff[:packetlength]
+            # read packet length
+            try:
+                packetlength, varintlength = unpack_varint(self.buff)
+            except:
+                return
+
+    def parsePacket(self, p_id, p_data):
+
+        print '%d -> %s' % (p_id, repr(str(p_data))[1:-1])
+
+        if 0 == self.state:
+            if 0x00 == p_id:
+                # first handshake: protocol, server, target state
+                protocol, varintlength = unpack_varint_fromstring(p_data)
+                p_data = p_data[varintlength:]
+                if M_PROTOCOL != protocol:
+                    self.logger.warning('Using protocol %d (server is %d)', protocol, M_PROTOCOL)
+                stringlength, varintlength = unpack_varint_fromstring(p_data)
+                p_data = p_data[varintlength:]
+                host = p_data[:stringlength].decode('utf-8')
+                p_data = p_data[stringlength:]
+                port = unpack_short(p_data[:2])
+                p_data = p_data[2:]
+                self.state, varintlength = unpack_varint_fromstring(p_data)
+                self.logger.info(
+                    '0 | 0x00 | protocol %d | host %s | port %d | nextstate %d',
+                    protocol,
+                    host,
+                    port,
+                    self.state
+                )
+            else:
+                raise BadPacketIdentifierException('%d (state 0)' % p_id)
+
+        elif 2 == self.state:
+            if 0x00 == p_id:
+                # second handshake: player name
+                stringlength, varintlength = unpack_varint_fromstring(p_data)
+                p_data = p_data[varintlength:]
+                self.playername = p_data[:stringlength].decode('utf-8')
+                self.logger.info('2 | 0x00 | player %s', self.playername)
+            else:
+                raise BadPacketIdentifierException('%d (state 2)' % p_id)
 
 class AuthServer():
 
