@@ -5,6 +5,7 @@ import logging
 import socket
 from sys import exc_info
 from select import select
+from urllib2 import urlopen
 from argparse import ArgumentParser
 from traceback import format_exception
 
@@ -14,8 +15,11 @@ from utils import *
 
 C_BIND_IP   = ''
 C_BIND_PORT = 25565
+C_AUTHENTIC = 9001
+C_AUTH_SIZE = 5
 
 M_PROTOCOL  = 4
+M_URI       = 'https://sessionserver.mojang.com/session/minecraft/hasJoined?username=%s&serverId=%s'
 
 S_BLOCK_TIME    = 1.0
 S_RECV_SIZE     = 1024
@@ -47,15 +51,15 @@ def loadConfiguration():
     return parser.parse_args()
 
 class EndOfStreamException(Exception):
-    """
-    The remote host closed the socket.
-    """
     pass
 
 class BadPacketIdentifierException(Exception):
-    """
-    Unexpected packet
-    """
+    pass
+
+class BadDecryptionVerificationException(Exception):
+    pass
+
+class MojangAuthenticationException(Exception):
     pass
 
 class ClientContext():
@@ -69,6 +73,9 @@ class ClientContext():
         self.buff = bytearray()
         self.state = 0
         self.playername = None
+
+        self.serverid = pseudorandom_string(16)
+        self.verifytoken = pseudorandom_string(4)
 
         self.logger.info('Client connected')
 
@@ -114,9 +121,6 @@ class ClientContext():
                 return
 
     def parsePacket(self, p_id, p_data):
-
-        print '%d -> %s' % (p_id, repr(str(p_data))[1:-1])
-
         if 0 == self.state:
             if 0x00 == p_id:
                 # first handshake: protocol, server, target state
@@ -131,7 +135,7 @@ class ClientContext():
                 port = unpack_short(p_data[:2])
                 p_data = p_data[2:]
                 self.state, varintlength = unpack_varint_fromstring(p_data)
-                self.logger.info(
+                self.logger.debug(
                     '0 | 0x00 | protocol %d | host %s | port %d | nextstate %d',
                     protocol,
                     host,
@@ -147,9 +151,49 @@ class ClientContext():
                 stringlength, varintlength = unpack_varint_fromstring(p_data)
                 p_data = p_data[varintlength:]
                 self.playername = p_data[:stringlength].decode('utf-8')
-                self.logger.info('2 | 0x00 | player %s', self.playername)
+                self.logger.debug('2 | 0x00 | player %s', self.playername)
+                self.sendEncryptionRequest()
+            elif 0x01 == p_id:
+                # encryption response
+                encsecretlength = unpack_short(p_data[:2])
+                p_data = p_data[2:]
+                encsecret = p_data[:encsecretlength]
+                p_data = p_data[encsecretlength:]
+                encverifytokenlength = unpack_short(p_data[:2])
+                p_data = p_data[2:]
+                encverifytoken = p_data[:encverifytokenlength]
+                if self.verifytoken != self.key.decryptPKCS115(encverifytoken):
+                    raise BadDecryptionVerificationException('Token mismatch')
+                self.secret = self.key.decryptPKCS115(encsecret)
+                self.logger.debug('2 | 0x01 | secret ' + self.secret.encode('hex'))
+                self.authenticate()
             else:
                 raise BadPacketIdentifierException('%d (state 2)' % p_id)
+
+    def sendEncryptionRequest(self):
+        der = self.key.exportPublicDER()
+        data = pack_varint(0x01)
+        data += pack_data(self.serverid) + pack_short(len(der)) + der
+        data += pack_short(len(self.verifytoken)) + self.verifytoken
+        self.sock.send(pack_data(data))
+
+    def authenticate(self):
+        serverhash = login_hash(
+            self.serverid,
+            self.secret,
+            self.key.exportPublicDER()
+        )
+        self.logger.debug('Authenticating client with Mojang...')
+        response = urlopen(M_URI % (self.playername, serverhash))
+        if 200 != response.code:
+            raise MojangAuthenticationException('Mojang authentication was unsuccessful')
+        self.state = C_AUTHENTIC
+        self.logger.info('%s is authenticated', self.playername)
+        self.authkey()
+
+    def authkey(self):
+        authkey = pseudorandom_string(C_AUTH_SIZE)
+
 
 class AuthServer():
 
@@ -206,7 +250,7 @@ class AuthServer():
                 except:
                     exception = exc_info()
                     if exception[0] not in ignore_exc:
-                        self.logger.warning('An exception occurred while processing a client!')
+                        self.logger.warning('An exception occurred processing a client context!')
                         self.logger.warning(''.join(format_exception(*exception)))
                     self.removeClient(sock)
 

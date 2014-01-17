@@ -4,6 +4,7 @@ from logging import getLogger
 from os.path import isfile
 
 from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_v1_5
 
 C_KEY_FILENAME  = 'authserv.pem'
 C_KEY_BITS      = 1024
@@ -35,6 +36,9 @@ class KeyManager():
             key = self._loadKeyData(fp.read())
         return key
 
+    def exportPublicDER(self):
+        return self.publickey.exportKey('DER')
+
     def loadOwnKey(self, filename=None):
         # load private key
         filename = filename or C_KEY_FILENAME
@@ -52,6 +56,9 @@ class KeyManager():
         # write private key
         self._saveKeyFile(self.privatekey, self.keyfile)
 
+    def decryptPKCS115(self, data):
+        cipher = PKCS1_v1_5.new(self.privatekey)
+        return cipher.decrypt(data, None)
 
     class KeyNotFoundException(Exception):
         """
