@@ -149,6 +149,7 @@ class ClientContext():
                 return
 
     def parsePacket(self, p_id, p_data):
+        print [p_id, p_data]
         if 0 == self.state:
             if 0x00 == p_id:
                 # first handshake: protocol, server, target state
