@@ -149,7 +149,6 @@ class ClientContext():
                 return
 
     def parsePacket(self, p_id, p_data):
-        print [p_id, p_data]
         if 0 == self.state:
             if 0x00 == p_id:
                 # first handshake: protocol, server, target state
@@ -193,6 +192,7 @@ class ClientContext():
             elif 0x01 == p_id:
                 # ping latency
                 self.sendPingLatency(p_data)
+                raise EndOfStreamException('Closing ping request')
             else:
                 raise BadPacketIdentifierException('%d (state 1)' % p_id)
 
