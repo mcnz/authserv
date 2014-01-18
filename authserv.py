@@ -5,6 +5,7 @@ import logging
 import socket
 from sys import exc_info
 from json import dumps
+from time import time as now
 from select import select
 from urllib2 import urlopen
 from argparse import ArgumentParser
@@ -38,6 +39,7 @@ M_BAD_TEXT += u'\u00a74-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-'
 
 S_BLOCK_TIME    = 1.0
 S_RECV_SIZE     = 1024
+S_TIMEOUT       = 5
 
 def loadConfiguration():
     parser = ArgumentParser()
@@ -90,6 +92,7 @@ class ClientContext():
         self.logger = logging.getLogger(d[0])
         self.buff = bytearray()
         self.state = 0
+        self.lastdata = now()
         self.playername = None
         self.encrypted = False
 
@@ -99,12 +102,16 @@ class ClientContext():
         self.logger.info('Client connected')
 
     def onData(self):
+        self.lastdata = now()
         data = self.sock.recv(S_RECV_SIZE)
         if data:
             self.buff.extend(data)
             self.parseBuffer()
         else:
             raise EndOfStreamException('No more data')
+
+    def isTimedOut(self, t):
+        return self.lastdata + S_TIMEOUT < t
 
     def dispose(self):
         self.disconnect()
@@ -323,6 +330,13 @@ class AuthServer():
                         self.logger.warning('An exception occurred processing a client context!')
                         self.logger.warning(''.join(format_exception(*exception)))
                     self.removeClient(sock)
+
+    def checkTimeouts(self):
+        t = now()
+        for sock in self.sockets.keys():
+            context = self.sockets[sock]
+            if context and context.isTimedOut(t):
+                self.removeClient(sock)
 
     def removeClient(self, sock):
         context = self.sockets[sock]
