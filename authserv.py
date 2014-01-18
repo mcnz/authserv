@@ -192,7 +192,8 @@ class ClientContext():
             elif 0x01 == p_id:
                 # ping latency
                 self.sendPingLatency(p_data)
-                raise EndOfStreamException('Closing ping request')
+                self.logger.debug('Closing on latency request')
+                raise EndOfStreamException('Closing on latency request')
             else:
                 raise BadPacketIdentifierException('%d (state 1)' % p_id)
 
@@ -321,6 +322,8 @@ class AuthServer():
                 context = ClientContext(self.key, *sock.accept())
                 # store
                 socketdict[context.sock] = context
+                # periodic tasks
+                self.checkTimeouts()
 
             else:
                 try:
