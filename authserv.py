@@ -324,14 +324,6 @@ class AuthServer():
                         self.logger.warning(''.join(format_exception(*exception)))
                     self.removeClient(sock)
 
-
-    def checkTimeouts(self):
-        t = time()
-        for sock in self.sockets.keys():
-            context = self.sockets[sock]
-            if context and context.isTimedOut(t):
-                self.removeClient(sock)
-
     def removeClient(self, sock):
         context = self.sockets[sock]
         del self.sockets[sock]
