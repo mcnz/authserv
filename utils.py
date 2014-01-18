@@ -5,7 +5,7 @@ Modified from https://gist.github.com/barneygale/1209061
 
 from random import choice
 from struct import pack, unpack
-from string import letters, digits
+from string import ascii_lowercase, digits
 
 from Crypto.Hash import SHA
 
@@ -48,7 +48,7 @@ def pack_data(d):
 
 def pseudorandom_string(l):
     s = ''
-    selection = letters + '_' + digits
+    selection = ascii_lowercase + '_' + digits
     while l:
         s += choice(selection)
         l -= 1
