@@ -176,7 +176,6 @@ class ClientContext():
         elif 1 == self.state:
             if 0x00 == p_id:
                 # ping request
-                self.state = C_AUTHENTIC
                 response = {
                     'version': {
                         'name':     M_VERSION,
@@ -193,6 +192,7 @@ class ClientContext():
                 # ping latency
                 self.sendPingLatency(p_data)
                 self.logger.debug('Closing on latency request')
+                self.state = C_AUTHENTIC
                 raise EndOfStreamException('Closing on latency request')
             else:
                 raise BadPacketIdentifierException('%d (state 1)' % p_id)
@@ -281,20 +281,12 @@ class AuthServer():
         self.key = k
         self.logger = logging.getLogger('authserver')
 
-    def idle(self):
-        pass
-
     def selectReadable(self):
         keys = self.sockets.keys
         empt = []
-        idle = self.idle
         while self.alive:
-            a = select(keys(), empt, empt, S_BLOCK_TIME)[0]
-            if a:
-                for s in a:
-                    yield s
-            else:
-                idle()
+            for s in select(keys(), empt, empt, S_BLOCK_TIME)[0]:
+                yield s
     
     def run(self):
         binding = (self.conf.ip, int(self.conf.port))
