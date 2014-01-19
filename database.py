@@ -23,6 +23,7 @@ class Database():
 
     def __exit__(self, type, value, traceback):
         self.logger.debug('Closing database...')
+        self.cursor.close()
         self.db.close()
         self.logger.debug('Closed')
 
@@ -33,3 +34,4 @@ class Database():
     def insertAuthkey(self, playername, authkey):
         self.cursor.execute("DELETE FROM " + MYSQL_TABLE + " WHERE playername = %s", (playername,))
         self.cursor.execute("INSERT INTO " + MYSQL_TABLE + " VALUES (%s, %s, now())", (playername, authkey))
+        self.db.commit()
